@@ -21,6 +21,10 @@ type Tree struct {
 	root *node
 }
 
+func Generate_Rad_Tree() *Tree {
+	return &Tree{}
+}
+
 func (n *node) getNode(label byte) *node {
 	num := len(n.edges)
 	idx := sort.Search(num, func(i int) bool {
@@ -66,15 +70,16 @@ func longestP(s1 string, s2 string) int {
 	return i
 }
 
-func (t *Tree) Insert(s string) *Server {
+func (t *Tree) Insert(s string) (*node, *Server) {
 	if t.root == nil {
-    t.root = &node{prefix: s}
-    return nil
-    }
+		t.root = &node{prefix: s}
+		return t.root, nil
+	}
 	var parent *node = nil
 	n := t.root
 	search := s
 	var server_ *Server = nil
+	var retnode *node = nil
 	for true {
 
 		if n.server != nil {
@@ -93,10 +98,12 @@ func (t *Tree) Insert(s string) *Server {
 				} else {
 					new_edge := edge{label: search[0], node: &node{server: nil, prefix: search}}
 					n.addEdge(new_edge)
+					retnode = new_edge.node
 					break
 				}
 			} else {
-				return server_
+				retnode = n
+				return retnode, server_
 			}
 		} else {
 			split_curr := n.prefix[comm_p:]
@@ -107,10 +114,12 @@ func (t *Tree) Insert(s string) *Server {
 			comm_node := &node{server: nil, prefix: common}
 			n.prefix = split_curr
 			comm_node.addEdge(edge{label: n.prefix[0], node: n})
+			retnode = comm_node
 
 			if split_search != "" {
 				search_node := &node{server: nil, prefix: split_search}
 				comm_node.addEdge(edge{label: search_node.prefix[0], node: search_node})
+				retnode = search_node
 			}
 			if parent != nil {
 				parent.DelEdge(edge{label: common[0], node: n})
@@ -123,5 +132,5 @@ func (t *Tree) Insert(s string) *Server {
 
 		}
 	}
-	return server_
+	return retnode, server_
 }

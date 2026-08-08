@@ -9,19 +9,25 @@ import (
 )
 
 type Middleware struct {
-	h *httputil.ReverseProxy
+	h  *httputil.ReverseProxy
+	lb *LoadBalance
 }
 
 func (middle *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	Tokens := tokenize(r)
-	New_req := r.Clone(context.WithValue(r.Context(), "token", Tokens))
+	New_req := r.WithContext(context.WithValue(r.Context(), "Body_Info", middle.lb.GetInfo(r)))
 
 	middle.h.ServeHTTP(w, New_req)
 }
 
+type Body_Info struct {
+	token   int
+	retnode *node
+	server_ *Server
+}
+
 func main() {
 
-	lb := LoadBalance{}
+	lb := LoadBalance{Rad_T: &Tree{}}
 	lb.Add_Server(NewServer("localhost", "8081"))
 	lb.Add_Server(NewServer("localhost", "8082"))
 	lb.Add_Server(NewServer("localhost", "8083"))
@@ -30,41 +36,45 @@ func main() {
 
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
-			selected_server := lb.Choose_Server()
-			server_url, _ := url.Parse(selected_server.Get_url_str())
-
-			Value := r.In.Context().Value("token")
-
-			Tokens, ok := Value.(int)
+			lat_server := lb.Choose_Server()
+			un_Info := r.In.Context().Value("Body_Info")
+			Info, ok := un_Info.(Body_Info)
 			if ok {
-				selected_server.active_tokens.Add(int64(Tokens))
-				r.Out = r.Out.Clone(context.WithValue(r.Out.Context(), "server", selected_server))
+				selected_server := lb.Picker(lat_server, Info.server_)
+				selected_server.active_tokens.Add(int64(Info.token))
+				r.Out = r.Out.WithContext(context.WithValue(r.Out.Context(), "s_server", selected_server))
+
+				lb.mu.Lock()
+				Info.retnode.server = selected_server // assigning the selected server to the matched node
+				lb.mu.Unlock()
+
+				server_url, _ := url.Parse(selected_server.Get_url_str())
 				r.SetURL(server_url)
 				r.SetXForwarded()
 			}
 		}, ModifyResponse: func(res *http.Response) error {
-			temp_val := res.Request.Context().Value("token")
+			un_Info := res.Request.Context().Value("Body_Info")
 
-			Tokens, _ := temp_val.(int)
+			Info, _ := un_Info.(Body_Info)
 
-			temp_val = res.Request.Context().Value("server")
+			temp_val := res.Request.Context().Value("s_server")
 
 			s_server, _ := temp_val.(*Server)
-			s_server.active_tokens.Add(-int64(Tokens))
+			s_server.active_tokens.Add(-int64(Info.token))
 
 			return nil
 		}, ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			if temp_val := r.Context().Value("server"); temp_val != nil {
+			if temp_val := r.Context().Value("s_server"); temp_val != nil {
 				if s_server, ok := temp_val.(*Server); ok {
-					if Tokens := r.Context().Value("token"); Tokens != nil {
-						s_server.active_tokens.Add(-int64(Tokens.(int)))
+					if Info := r.Context().Value("Body_Info"); Info != nil {
+						s_server.active_tokens.Add(-int64(Info.(Body_Info).token))
 					}
 				}
 			}
 			w.WriteHeader(http.StatusBadGateway)
 		},
 	}
-	mid_prox := Middleware{h: proxy}
+	mid_prox := Middleware{h: proxy, lb: &lb}
 	mux.Handle("/", &mid_prox)
 
 	err := http.ListenAndServe(":9090", mux)
